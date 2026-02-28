@@ -9,7 +9,41 @@ spec:
   from:
     - group: gateway.kgateway.dev
       kind: GatewayExtension
-      namespace: kgateway-system
+      namespace: agentgateway-system
   to:
     - group: ""
       kind: Service
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: keycloak-from-httproute
+  namespace: keycloak
+  labels:
+    app: agentgateway-kyverno
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: agentgateway-system
+  to:
+    - group: ""
+      kind: Service
+      name: keycloak
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: keycloak-tls-from-gateway
+  namespace: keycloak
+  labels:
+    app: agentgateway-kyverno
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: agentgateway-system
+  to:
+    - group: ""
+      kind: Secret
+      name: keycloak-tls

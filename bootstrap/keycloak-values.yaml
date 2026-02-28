@@ -7,16 +7,24 @@ auth:
   adminPassword: admin
   managementUser: manager
   managementPassword: manager
+
 proxyAddressForwarding: true
+
+# Disable ingress - use LoadBalancer instead (simpler, no NGINX needed)
 ingress:
-  enabled: true
-  ingressClassName: nginx
-  hostname: keycloak.kind.cluster
-  tls: true
-  extraTls:
-    - hosts:
-        - keycloak.kind.cluster
-      secretName: keycloak.kind.cluster-tls
+  enabled: false
+
+# Expose via LoadBalancer for external OIDC access (kubectl authentication)
+# AgentgatewayPolicy will use the internal service for MCP auth
+service:
+  type: LoadBalancer
+  ports:
+    http: 8080
+    https: 8443
+
+# Disable TLS for easier MCP Inspector OAuth flow
+tls:
+  enabled: false
 
 postgresql:
   image:

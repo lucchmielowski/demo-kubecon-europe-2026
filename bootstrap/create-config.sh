@@ -1,9 +1,9 @@
-!/bin/sh
+#!/bin/sh
 
 kubectl_config(){
-  local ISSUER=https://keycloak.kind.cluster/realms/master
+  local ISSUER=http://keycloak.kind.cluster:8080/realms/master
   local ENDPOINT=$ISSUER/protocol/openid-connect/token
-  local ID_TOKEN=$(curl -k -X POST $ENDPOINT \
+  local ID_TOKEN=$(curl -X POST $ENDPOINT \
     -d grant_type=password \
     -d client_id=kube \
     -d client_secret=kube-client-secret \
@@ -11,7 +11,7 @@ kubectl_config(){
     -d password=$1 \
     -d scope=openid \
     -d response_type=id_token | jq -r '.id_token')
-  local REFRESH_TOKEN=$(curl -k -X POST $ENDPOINT \
+  local REFRESH_TOKEN=$(curl -X POST $ENDPOINT \
     -d grant_type=password \
     -d client_id=kube \
     -d client_secret=kube-client-secret \

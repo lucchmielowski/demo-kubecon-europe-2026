@@ -4,10 +4,11 @@ metadata:
   name: ext-authz
   namespace: agentgateway-system
 spec:
+  # Target the HTTPRoute for traffic-level extAuth
   targetRefs:
-    - group: gateway.networking.k8s.io
+    - name: mcp
       kind: HTTPRoute
-      name: mcp
+      group: gateway.networking.k8s.io
   traffic:
     extAuth:
       backendRef:
@@ -17,3 +18,154 @@ spec:
       grpc: {}
       forwardBody:
         maxSize: 1024
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-authn
+  namespace: agentgateway-system
+spec:
+  # Target the MCP backend to apply this authentication policy
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: mcp
+  backend:
+    mcp:
+      authentication:
+        # Issuer URL - must match the 'iss' claim in JWT tokens
+        issuer: "http://keycloak.kind.cluster:8080/realms/master"
+        # JWKS configuration for token validation
+        jwks:
+          # Reference to the Keycloak service for fetching public keys
+          backendRef:
+            name: keycloak
+            kind: Service
+            namespace: keycloak
+            port: 8080
+          # Path to the JWKS endpoint on the issuer
+          jwksPath: "/realms/master/protocol/openid-connect/certs"
+        # Expected audience in JWT tokens
+        audiences:
+        - http://gateway.kind.cluster:8080/mcp
+        # Validation mode: Strict requires all claims to be valid
+        mode: Strict
+        # Identity provider type
+        provider: Keycloak
+        # MCP resource metadata for OAuth discovery
+        resourceMetadata:
+          # Resource identifier for this MCP server
+          resource: http://gateway.kind.cluster:8080/mcp
+          # Explicit OAuth server endpoints to avoid upstream metadata fetch issues.
+          authorizationServer: "http://keycloak.kind.cluster:8080/realms/master"
+          tokenEndpoint: "http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token"
+          # Scopes supported by this MCP server
+          scopesSupported:
+          - email
+          - openid
+          # Methods for providing bearer tokens
+          bearerMethodsSupported:
+          - header
+          - body
+          - query
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-public-cors
+  namespace: agentgateway-system
+spec:
+  # Target the public HTTPRoute to apply CORS configuration
+  targetRefs:
+    - name: mcp-public
+      kind: HTTPRoute
+      group: gateway.networking.k8s.io
+  traffic:
+    # Enable CORS for browser-based OAuth discovery
+    cors:
+      allowOrigins:
+        - '*'
+      allowMethods:
+        - GET
+        - POST
+        - OPTIONS
+      allowHeaders:
+        - mcp-protocol-version
+        - content-type
+        - authorization
+        - origin
+        - accept
+      allowCredentials: false
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-cors
+  namespace: agentgateway-system
+spec:
+  # Target the HTTPRoute to apply CORS configuration
+  targetRefs:
+    - name: mcp
+      kind: HTTPRoute
+      group: gateway.networking.k8s.io
+  traffic:
+    # Enable CORS for browser-based MCP clients
+    cors:
+      allowOrigins:
+        - '*'
+      allowMethods:
+        - GET
+        - POST
+        - OPTIONS
+      allowHeaders:
+        - mcp-protocol-version
+        - mcp-session-id
+        - content-type
+        - authorization
+        - origin
+      exposeHeaders:
+        - mcp-session-id
+        - mcp-protocol-version
+      allowCredentials: false
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-preflight-cors
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - name: mcp-preflight
+      kind: HTTPRoute
+      group: gateway.networking.k8s.io
+  traffic:
+    cors:
+      allowOrigins:
+        - '*'
+      allowMethods:
+        - OPTIONS
+      allowHeaders:
+        - mcp-protocol-version
+        - mcp-session-id
+        - content-type
+        - authorization
+        - origin
+      exposeHeaders:
+        - mcp-session-id
+        - mcp-protocol-version
+      allowCredentials: false
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mcp-oauth-metadata-rewrite
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - name: mcp-public
+      kind: HTTPRoute
+      group: gateway.networking.k8s.io
+  traffic:
+    transformation:
+      response:
+        body: 'request.path.startsWith("/.well-known/oauth-authorization-server") || request.path == "/.well-known/openid-configuration" ? json(response.body).merge({"issuer":"http://keycloak.kind.cluster:8080/realms/master","authorization_endpoint":"http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/auth","token_endpoint":"http://gateway.kind.cluster:8080/realms/master/protocol/openid-connect/token","registration_endpoint":"http://gateway.kind.cluster:8080/realms/master/clients-registrations/openid-connect","jwks_uri":"http://gateway.kind.cluster:8080/realms/master/protocol/openid-connect/certs"}) : response.body'

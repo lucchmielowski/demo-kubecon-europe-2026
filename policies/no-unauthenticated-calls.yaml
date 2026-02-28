@@ -1,5 +1,5 @@
 # Forbid all unauthenticated calls on the gateway
-apiVersion: policies.kyverno.io/v1
+apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:
   name: no-unauthenticated-calls
@@ -8,20 +8,48 @@ spec:
     mode: Envoy
 
   variables:
+    # Check if this is a request that should bypass authentication
+    - name: requestMethod
+      expression: object.attributes.request.http.method
+    - name: requestPath
+      expression: object.attributes.request.http.path
+    - name: isPublicPath
+      expression: |
+        variables.requestMethod == "OPTIONS" ||
+        variables.requestPath.startsWith("/.well-known/")
+    - name: hasAuthHeader
+      expression: '"authorization" in object.attributes.request.http.headers'
+
     # Decode JWT token from user
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local/realms/master/protocol/openid-connect/certs")
+      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
-      expression: object.attributes.request.http.headers["authorization"].split(" ")[1]
+      expression: |
+        variables.isPublicPath || !variables.hasAuthHeader ? "" :
+          (object.attributes.request.http.headers["authorization"].startsWith("Bearer ") ?
+            object.attributes.request.http.headers["authorization"].split(" ")[1] : "")
     - name: decodedJwt
-      expression: jwt.Decode(variables.jwtString, variables.jwks)
-    # Get user group from JWT token
+      expression: |
+        variables.jwtString == "" ?
+          jwt.Decode("eyJhbGciOiJIUzI1NiJ9.e30.invalid", variables.jwks) :
+          jwt.Decode(variables.jwtString, variables.jwks)
+    # Get user group from JWT token (first group if present)
     - name: userGroup
-      expression: variables.decodedJwt.Claims["groups"][0]
+      expression: |
+        ("groups" in variables.decodedJwt.Claims) &&
+        size(variables.decodedJwt.Claims["groups"]) > 0 ?
+          variables.decodedJwt.Claims["groups"][0] : ""
+    - name: allowedGroups
+      expression: '["kube-dev", "kube-admin"]'
+    - name: isAllowedGroup
+      expression: variables.userGroup in variables.allowedGroups
   validations:
-    # If valid JWT token and known user group, allow access
+    # Allow OPTIONS requests and .well-known paths without authentication
+    # Otherwise require a valid JWT token and membership in an allowed group
     - expression: |
-        has(variables.jwtString) &&
-        variables.decodedJwt.Valid &&
-          variables.userGroup in ["kube-dev", "kube-admin"] ?
-            envoy.Allowed().Response() : envoy.Denied(401).Response()
+        variables.isPublicPath ?
+          envoy.Allowed().Response() :
+          (variables.jwtString != "" &&
+           variables.decodedJwt.Valid &&
+           variables.isAllowedGroup ?
+             envoy.Allowed().Response() : envoy.Denied(401).Response())
