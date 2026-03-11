@@ -26,6 +26,24 @@ This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authenti
    ./get-token.sh admin
    ```
 
+## Agent Integrations
+
+### Cursor 
+
+Create a `.cursor/mcp.json` file in the project.
+
+```
+{
+  "mcpServers": {
+    "agentgateway": {
+      "url": "http://gateway.kind.cluster:8080/mcp"
+    }
+  }
+}
+```
+
+When prompted, run mcp_auth from the Cursor session. That will run the DCR flow with keycloak and you will have access to the kagent tools! 
+
 ---
 
 ## Example 1: Restrict all non-authorized calls
@@ -43,10 +61,8 @@ The `no-unauthenticated-calls` policy:
 ### Test Case 1.1: Unauthenticated Request (Should Fail)
 
 ```bash
-GATEWAY_URL="$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}'):8080"
-
 # Make a request without authentication token
-curl -v -X POST http://$GATEWAY_URL/mcp \
+curl -v -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{
@@ -71,13 +87,11 @@ curl -v -X POST http://$GATEWAY_URL/mcp \
 ### Test Case 1.2: Valid Token with Authorized Group (Should Succeed)
 
 ```bash
-GATEWAY_URL="$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}'):8080"
-
 # Get token for alice (member of kube-dev group)
 TOKEN=$(./get-token.sh alice)
 
 # Initialize MCP session
-SESSION_ID=$(curl -sS --http1.1 -i http://$GATEWAY_URL/mcp \
+SESSION_ID=$(curl -sS --http1.1 -i http://gateway.kind.cluster:8080/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -85,7 +99,7 @@ SESSION_ID=$(curl -sS --http1.1 -i http://$GATEWAY_URL/mcp \
   | grep -i "^Mcp-Session-Id:" | cut -d' ' -f2 | tr -d '\r')
 
 # Make authenticated request
-curl -X POST http://$GATEWAY_URL/mcp \
+curl -X POST http://gateway.kind.cluster:8080/mcp -v \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "Authorization: Bearer $TOKEN" \
@@ -115,7 +129,7 @@ curl -X POST http://$GATEWAY_URL/mcp \
 
 ```bash
 # Make a request with an invalid token
-curl -X POST http://$GATEWAY_URL/mcp \
+curl -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'Authorization: Bearer invalid-token-here' \
@@ -141,13 +155,13 @@ curl -X POST http://$GATEWAY_URL/mcp \
 
 ```bash
 # Get token for a user in the "restricted" group (not in kube-dev or kube-admin)
-TOKEN=$(./get-token.sh unauthorized-user)
+UNAUTHORIZED_TOKEN=$(./get-token.sh unauthorized-user)
 
 # Attempt any request - should be denied at the authentication layer
-curl -v -X POST http://$GATEWAY_URL/mcp \
+curl -v -X POST http://gateway.kind.cluster:8080/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $UNAUTHORIZED_TOKEN" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -197,7 +211,7 @@ This creates a `ClusterRole` and `ClusterRoleBinding` that grant the `kyverno-au
 TOKEN=$(./get-token.sh alice)
 
 # Initialize MCP session (REQUIRED!)
-SESSION_ID=$(curl -sS --http1.1 -i "http://$GATEWAY_URL/mcp" \
+SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.kind.cluster:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -210,7 +224,7 @@ echo "Session ID: $SESSION_ID"
 MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
 
 # Create resource in dev-team namespace (alice has permissions here)
-curl -s "http://$GATEWAY_URL/mcp" \
+curl -s "http://gateway.kind.cluster:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -265,7 +279,7 @@ TOKEN=$(./get-token.sh alice)
 GATEWAY_URL="gateway.kind.cluster:8080"
 
 # Initialize MCP session
-SESSION_ID=$(curl -sS --http1.1 -i "http://$GATEWAY_URL/mcp" \
+SESSION_ID=$(curl -sS --http1.1 -i "http://gateway.kind.cluster:8080/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -277,7 +291,7 @@ echo "Session ID: $SESSION_ID"
 # Attempt to create resource in production namespace
 MANIFEST_URL="https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml"
 
-curl -s "http://$GATEWAY_URL/mcp" -v \
+curl -s "http://gateway.kind.cluster:8080/mcp" -v \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \

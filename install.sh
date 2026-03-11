@@ -424,6 +424,23 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
         print_warning "Failed to get Keycloak LoadBalancer IP after ${max_attempts} attempts"
     fi
 
+    # On macOS with Docker Desktop, MetalLB LoadBalancer IPs are not routable
+    # from the host. Use kubectl port-forward so host-side tools (curl, Terraform,
+    # configure-keycloak-client-reg.sh) can reach Keycloak via localhost.
+    print_info "Starting port-forward to Keycloak for host access..."
+    kubectl port-forward svc/keycloak -n keycloak 8080:8080 &
+    KC_PF_PID=$!
+    sleep 2
+
+    print_info "Updating /etc/hosts to route keycloak.kind.cluster through port-forward..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sudo sed -i '' '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+    else
+        sudo sed -i '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+    fi
+    echo "127.0.0.1 keycloak.kind.cluster" | sudo tee -a /etc/hosts
+    print_success "DNS entry added to /etc/hosts (127.0.0.1 via port-forward)"
+
     # Apply Terraform configuration to create users, groups, and OAuth clients
     if [ -f ./bootstrap/keycloak.tf ]; then
         print_info "Waiting for Keycloak to be fully ready..."
@@ -432,13 +449,11 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
         }
 
         # Wait for Keycloak to be ready to accept API requests
-        # Use --resolve to bypass DNS since /etc/hosts may not be configured yet
         print_info "Verifying Keycloak API is responding..."
         max_attempts=30
         attempt=0
         while [ $attempt -lt $max_attempts ]; do
-            if curl -s -f ${KEYCLOAK_LB_IP:+--resolve "keycloak.kind.cluster:8080:${KEYCLOAK_LB_IP}"} \
-                -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
+            if curl -s -f -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
                 -d grant_type=password \
                 -d client_id=admin-cli \
                 -d username=admin \
@@ -454,6 +469,7 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
                 print_error "Keycloak API did not become ready in time"
                 print_warning "You can manually apply Terraform later with:"
                 print_warning "  cd bootstrap && terraform init && terraform apply"
+                kill $KC_PF_PID 2>/dev/null
                 exit 1
             fi
         done
@@ -484,21 +500,10 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
         print_warning "Terraform configuration not found at ./bootstrap/keycloak.tf"
     fi
 
-    if [ -n "$KEYCLOAK_LB_IP" ]; then
-        read -p "Do you want to update /etc/hosts for keycloak.kind.cluster? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                sudo sed -i '' '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
-            else
-                sudo sed -i '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
-            fi
-            echo "$KEYCLOAK_LB_IP keycloak.kind.cluster" | sudo tee -a /etc/hosts
-            print_success "DNS entry added to /etc/hosts"
-        fi
-    else
-        print_warning "Failed to get LoadBalancer IP"
-    fi
+    # Stop the port-forward now that Keycloak setup is complete
+    kill $KC_PF_PID 2>/dev/null
+    print_info "Stopped Keycloak port-forward"
+
 else
     print_warning "Skipping Keycloak installation"
 fi
@@ -527,19 +532,30 @@ if [ "$SKIP_RBAC" = false ]; then
             print_warning "Timeout waiting for Keycloak pod"
         }
 
-        # Get Keycloak LoadBalancer IP if not already set (e.g. when --skip-keycloak was used)
-        if [ -z "$KEYCLOAK_LB_IP" ]; then
-            KEYCLOAK_LB_IP=$(kubectl get svc keycloak -n keycloak -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        # Start port-forward if not already running (e.g. when --skip-keycloak was used)
+        if ! kill -0 $KC_PF_PID 2>/dev/null; then
+            print_info "Starting port-forward to Keycloak for host access..."
+            kubectl port-forward svc/keycloak -n keycloak 8080:8080 &
+            KC_PF_PID=$!
+            sleep 2
+
+            # Ensure /etc/hosts points to localhost
+            if ! grep -q "127.0.0.1.*keycloak.kind.cluster" /etc/hosts; then
+                print_info "Updating /etc/hosts for keycloak.kind.cluster..."
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sudo sed -i '' '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+                else
+                    sudo sed -i '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+                fi
+                echo "127.0.0.1 keycloak.kind.cluster" | sudo tee -a /etc/hosts
+            fi
         fi
 
-        # Wait for Keycloak API to be ready
-        # Use --resolve to bypass DNS since /etc/hosts may not be configured yet
         print_info "Verifying Keycloak API is responding..."
         max_attempts=30
         attempt=0
         while [ $attempt -lt $max_attempts ]; do
-            if curl -s -f ${KEYCLOAK_LB_IP:+--resolve "keycloak.kind.cluster:8080:${KEYCLOAK_LB_IP}"} \
-                -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
+            if curl -s -f -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
                 -d grant_type=password \
                 -d client_id=admin-cli \
                 -d username=admin \
@@ -554,35 +570,27 @@ if [ "$SKIP_RBAC" = false ]; then
             else
                 print_error "Keycloak API did not become ready in time"
                 print_warning "You can manually run create-config.sh later"
+                kill $KC_PF_PID 2>/dev/null
                 exit 1
             fi
         done
 
-        # Verify Keycloak is accessible
-        if [ -z "$KEYCLOAK_LB_IP" ]; then
-            print_error "Keycloak LoadBalancer IP not found. Skipping kubectl config creation."
-            print_warning "Run this manually after Keycloak is ready:"
-            print_warning "  ./bootstrap/create-config.sh"
+        if grep -q "keycloak.kind.cluster" /etc/hosts; then
+            print_info "Running create-config.sh..."
+            chmod +x ./bootstrap/create-config.sh
+            ./bootstrap/create-config.sh || {
+                print_warning "Failed to create kubectl configurations."
+                print_warning "You may need to run this manually after Keycloak is fully ready:"
+                print_warning "  ./bootstrap/create-config.sh"
+            }
+            print_success "kubectl configurations created"
         else
-            print_info "Keycloak LoadBalancer IP: $KEYCLOAK_LB_IP"
-
-            # Check if /etc/hosts has the entry
-            if grep -q "keycloak.kind.cluster" /etc/hosts; then
-                print_info "Running create-config.sh..."
-                chmod +x ./bootstrap/create-config.sh
-                ./bootstrap/create-config.sh || {
-                    print_warning "Failed to create kubectl configurations."
-                    print_warning "You may need to run this manually after Keycloak is fully ready:"
-                    print_warning "  ./bootstrap/create-config.sh"
-                }
-                print_success "kubectl configurations created"
-            else
-                print_warning "/etc/hosts does not have keycloak.kind.cluster entry"
-                print_warning "Add this entry to /etc/hosts:"
-                print_warning "  $KEYCLOAK_LB_IP keycloak.kind.cluster"
-                print_warning "Then run: ./bootstrap/create-config.sh"
-            fi
+            print_warning "/etc/hosts does not have keycloak.kind.cluster entry"
+            print_warning "Run manually: ./bootstrap/create-config.sh"
         fi
+
+        # Stop port-forward
+        kill $KC_PF_PID 2>/dev/null
     else
         print_warning "create-config.sh not found, skipping this step"
     fi
@@ -725,33 +733,60 @@ else
     print_warning "policies/ directory not found, skipping policy application"
 fi
 
-# Continue with gateway IP configuration
+# Continue with gateway host access configuration
 if [ -d ./gateway ]; then
 
-    # Wait for gateway to get LoadBalancer IP
-    print_info "Waiting for gateway LoadBalancer IP..."
-    sleep 10
-    GATEWAY_LB_IP=$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}' 2>/dev/null || echo "")
-
-    if [ -n "$GATEWAY_LB_IP" ]; then
-        print_success "Gateway LoadBalancer IP: $GATEWAY_LB_IP"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        print_info "Configuring gateway.kind.cluster for host access via port-forward..."
 
         read -p "Do you want to update /etc/hosts for gateway.kind.cluster? (y/n) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if [[ "$OSTYPE" == "darwin"* ]]; then
+            # On macOS with Docker Desktop, MetalLB LoadBalancer IPs are not routable
+            # from the host. Keep the hostname on localhost and forward traffic to
+            # the Gateway service so curl/Cursor can reach the MCP endpoint.
+            print_info "Starting port-forward to AgentGateway for host access..."
+            nohup kubectl port-forward svc/agentgateway-proxy -n agentgateway-system 8080:8080 \
+                >/tmp/agentgateway-port-forward.log 2>&1 &
+            GATEWAY_PF_PID=$!
+            sleep 2
+
+            if kill -0 $GATEWAY_PF_PID 2>/dev/null; then
                 sudo sed -i '' '/gateway\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+                echo "127.0.0.1 gateway.kind.cluster" | sudo tee -a /etc/hosts >/dev/null
+                print_success "DNS entry added to /etc/hosts (127.0.0.1 via port-forward)"
+                print_info "Gateway port-forward log: /tmp/agentgateway-port-forward.log"
+                print_info "You can now access the gateway at: http://gateway.kind.cluster:8080/mcp"
             else
-                sudo sed -i '/gateway\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+                print_warning "Failed to start gateway port-forward."
+                print_warning "Check /tmp/agentgateway-port-forward.log for details."
+                print_warning "You can retry manually with: kubectl port-forward svc/agentgateway-proxy -n agentgateway-system 8080:8080"
             fi
-            echo "$GATEWAY_LB_IP gateway.kind.cluster" | sudo tee -a /etc/hosts
-            print_success "DNS entry added to /etc/hosts"
-            print_info "You can now access the gateway at: http://gateway.kind.cluster:8080/mcp"
         else
-            print_warning "Skipping DNS configuration. Access gateway at: http://$GATEWAY_LB_IP:8080/mcp"
+            print_warning "Skipping gateway host configuration."
         fi
     else
-        print_warning "Failed to get Gateway LoadBalancer IP"
+        # Wait for gateway to get LoadBalancer IP
+        print_info "Waiting for gateway LoadBalancer IP..."
+        sleep 10
+        GATEWAY_LB_IP=$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}' 2>/dev/null || echo "")
+
+        if [ -n "$GATEWAY_LB_IP" ]; then
+            print_success "Gateway LoadBalancer IP: $GATEWAY_LB_IP"
+
+            read -p "Do you want to update /etc/hosts for gateway.kind.cluster? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                sudo sed -i '/gateway\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
+                echo "$GATEWAY_LB_IP gateway.kind.cluster" | sudo tee -a /etc/hosts >/dev/null
+                print_success "DNS entry added to /etc/hosts"
+                print_info "You can now access the gateway at: http://gateway.kind.cluster:8080/mcp"
+            else
+                print_warning "Skipping DNS configuration. Access gateway at: http://$GATEWAY_LB_IP:8080/mcp"
+            fi
+        else
+            print_warning "Failed to get Gateway LoadBalancer IP"
+        fi
     fi
 fi
 
@@ -769,9 +804,13 @@ echo "  2. Verify AgentgatewayPolicy and Kyverno policies:"
 echo "     kubectl get agentgatewaypolicy -n agentgateway-system"
 echo "     kubectl get validatingpolicy"
 echo ""
-echo "  3. Get gateway URL:"
-echo "     GATEWAY_URL=\"\$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}'):8080\""
-echo "     echo \"Gateway URL: http://\$GATEWAY_URL/mcp\""
+echo "  3. Gateway URL:"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "     http://gateway.kind.cluster:8080/mcp"
+else
+    echo "     GATEWAY_URL=\"\$(kubectl get gateway -n agentgateway-system -o jsonpath='{.items[0].status.addresses[0].value}'):8080\""
+    echo "     echo \"Gateway URL: http://\$GATEWAY_URL/mcp\""
+fi
 echo ""
 echo "  4. Run demo test cases from README.md:"
 echo "     - Test Case 1.1: Unauthenticated request (should fail with 403)"
