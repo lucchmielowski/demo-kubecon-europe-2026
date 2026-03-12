@@ -35,7 +35,7 @@ This demo implements a gateway pattern with MCP authentication where:
 1. MCP clients discover OAuth endpoints through the AgentgatewayPolicy
 2. Clients dynamically register with Keycloak to obtain a client ID
 3. Users complete the OAuth flow via Keycloak to receive JWT tokens
-4. MCP requests with JWT tokens are routed through AgentGateway
+4. MCP requests with JWT tokens are routed through agentgateway
 5. Kyverno validates requests against RBAC policies and business rules
 6. Only authorized actions reach the Kubernetes API server
 

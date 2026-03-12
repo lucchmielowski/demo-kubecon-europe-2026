@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-keycloak      Skip Keycloak installation"
             echo "  --skip-rbac          Skip RBAC configuration"
             echo "  --skip-kyverno       Skip Kyverno installation"
-            echo "  --skip-gateway       Skip Gateway API and AgentGateway installation"
+            echo "  --skip-gateway       Skip Gateway API and agentgateway installation"
             echo "  --skip-all           Skip all infrastructure setup (only apply gateway configs and policies)"
             echo "  --help, -h           Show this help message"
             exit 0
@@ -105,6 +105,66 @@ print_header() {
     echo -e "${BLUE}  ${1}${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+}
+
+find_free_local_port() {
+    local requested_port=${1:-18080}
+    local candidate
+
+    for candidate in "$requested_port" 18081 18082 18083 18084 18085; do
+        if ! lsof -nP -iTCP:$candidate -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+start_keycloak_port_forward() {
+    local preferred_port=${KEYCLOAK_LOCAL_PORT:-18080}
+    local chosen_port
+
+    if [ -n "${KC_PF_PID:-}" ] && kill -0 "$KC_PF_PID" 2>/dev/null; then
+        return 0
+    fi
+
+    chosen_port=$(find_free_local_port "$preferred_port") || {
+        print_error "Could not find a free local port for Keycloak bootstrap access."
+        return 1
+    }
+
+    KEYCLOAK_LOCAL_PORT="$chosen_port"
+    KEYCLOAK_BOOTSTRAP_URL="http://127.0.0.1:${KEYCLOAK_LOCAL_PORT}"
+
+    print_info "Starting port-forward to Keycloak for bootstrap access on ${KEYCLOAK_BOOTSTRAP_URL}..."
+    kubectl port-forward svc/keycloak -n keycloak ${KEYCLOAK_LOCAL_PORT}:8080 >/tmp/keycloak-port-forward.log 2>&1 &
+    KC_PF_PID=$!
+
+    sleep 2
+
+    if ! kill -0 "$KC_PF_PID" 2>/dev/null; then
+        print_error "Failed to start Keycloak port-forward."
+        print_warning "Check /tmp/keycloak-port-forward.log for details."
+        return 1
+    fi
+
+    local max_attempts=15
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -s -f "${KEYCLOAK_BOOTSTRAP_URL}/realms/master/.well-known/openid-configuration" >/dev/null 2>&1; then
+            print_success "Keycloak bootstrap endpoint is reachable at ${KEYCLOAK_BOOTSTRAP_URL}"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+
+    print_error "Keycloak port-forward started but the bootstrap endpoint is not responding."
+    print_warning "Check /tmp/keycloak-port-forward.log for details."
+    kill "$KC_PF_PID" 2>/dev/null || true
+    unset KC_PF_PID
+    return 1
 }
 
 # Function to wait for deployment to be ready
@@ -427,12 +487,9 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
     # On macOS with Docker Desktop, MetalLB LoadBalancer IPs are not routable
     # from the host. Use kubectl port-forward so host-side tools (curl, Terraform,
     # configure-keycloak-client-reg.sh) can reach Keycloak via localhost.
-    print_info "Starting port-forward to Keycloak for host access..."
-    kubectl port-forward svc/keycloak -n keycloak 8080:8080 &
-    KC_PF_PID=$!
-    sleep 2
+    start_keycloak_port_forward || exit 1
 
-    print_info "Updating /etc/hosts to route keycloak.kind.cluster through port-forward..."
+    print_info "Updating /etc/hosts so keycloak.kind.cluster resolves locally..."
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sudo sed -i '' '/keycloak\.kind\.cluster/d' /etc/hosts 2>/dev/null || true
     else
@@ -453,7 +510,7 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
         max_attempts=30
         attempt=0
         while [ $attempt -lt $max_attempts ]; do
-            if curl -s -f -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
+            if curl -s -f -X POST "${KEYCLOAK_BOOTSTRAP_URL}/realms/master/protocol/openid-connect/token" \
                 -d grant_type=password \
                 -d client_id=admin-cli \
                 -d username=admin \
@@ -478,20 +535,20 @@ if [ "$SKIP_KEYCLOAK" = false ]; then
         print_info "This will create users (alice, user-dev, user-admin), groups (kube-dev, kube-admin), and OAuth clients..."
 
         terraform -chdir=./bootstrap init -upgrade >/dev/null 2>&1
-        terraform -chdir=./bootstrap apply -auto-approve || {
+        if terraform -chdir=./bootstrap apply -auto-approve -var="keycloak_url=${KEYCLOAK_BOOTSTRAP_URL}"; then
+            print_success "Keycloak configuration applied via Terraform"
+        else
             print_error "Failed to apply Terraform configuration"
             print_warning "You can manually apply it later with:"
-            print_warning "  cd bootstrap && terraform init && terraform apply"
-        }
-
-        print_success "Keycloak configuration applied via Terraform"
+            print_warning "  cd bootstrap && terraform init && terraform apply -var=\"keycloak_url=${KEYCLOAK_BOOTSTRAP_URL}\""
+        fi
 
         if [ -f ./bootstrap/configure-keycloak-client-reg.sh ]; then
             print_info "Configuring Keycloak client registration trusted hosts for MCP Inspector..."
             chmod +x ./bootstrap/configure-keycloak-client-reg.sh
-            ./bootstrap/configure-keycloak-client-reg.sh || {
+            KEYCLOAK_URL="${KEYCLOAK_BOOTSTRAP_URL}" ./bootstrap/configure-keycloak-client-reg.sh || {
                 print_warning "Failed to configure Keycloak client registration policy automatically."
-                print_warning "Run manually: ./bootstrap/configure-keycloak-client-reg.sh"
+                print_warning "Run manually: KEYCLOAK_URL=${KEYCLOAK_BOOTSTRAP_URL} ./bootstrap/configure-keycloak-client-reg.sh"
             }
         else
             print_warning "configure-keycloak-client-reg.sh not found, skipping client registration policy setup"
@@ -534,10 +591,7 @@ if [ "$SKIP_RBAC" = false ]; then
 
         # Start port-forward if not already running (e.g. when --skip-keycloak was used)
         if ! kill -0 $KC_PF_PID 2>/dev/null; then
-            print_info "Starting port-forward to Keycloak for host access..."
-            kubectl port-forward svc/keycloak -n keycloak 8080:8080 &
-            KC_PF_PID=$!
-            sleep 2
+            start_keycloak_port_forward || exit 1
 
             # Ensure /etc/hosts points to localhost
             if ! grep -q "127.0.0.1.*keycloak.kind.cluster" /etc/hosts; then
@@ -555,7 +609,7 @@ if [ "$SKIP_RBAC" = false ]; then
         max_attempts=30
         attempt=0
         while [ $attempt -lt $max_attempts ]; do
-            if curl -s -f -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
+            if curl -s -f -X POST "${KEYCLOAK_BOOTSTRAP_URL}/realms/master/protocol/openid-connect/token" \
                 -d grant_type=password \
                 -d client_id=admin-cli \
                 -d username=admin \
@@ -578,10 +632,10 @@ if [ "$SKIP_RBAC" = false ]; then
         if grep -q "keycloak.kind.cluster" /etc/hosts; then
             print_info "Running create-config.sh..."
             chmod +x ./bootstrap/create-config.sh
-            ./bootstrap/create-config.sh || {
+            KEYCLOAK_ISSUER="${KEYCLOAK_BOOTSTRAP_URL}/realms/master" ./bootstrap/create-config.sh || {
                 print_warning "Failed to create kubectl configurations."
                 print_warning "You may need to run this manually after Keycloak is fully ready:"
-                print_warning "  ./bootstrap/create-config.sh"
+                print_warning "  KEYCLOAK_ISSUER=${KEYCLOAK_BOOTSTRAP_URL}/realms/master ./bootstrap/create-config.sh"
             }
             print_success "kubectl configurations created"
         else
@@ -668,27 +722,34 @@ else
     print_warning "Skipping Kyverno installation"
 fi
 
-# Step 8: Install Gateway API and AgentGateway
+# Step 8: Install Gateway API and agentgateway
 if [ "$SKIP_GATEWAY" = false ]; then
-    print_header "Step 8: Install Gateway API and AgentGateway"
+    print_header "Step 8: Install Gateway API and agentgateway"
 
     print_info "Installing Gateway API CRDs..."
     kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 
-    print_info "Installing AgentGateway CRDs..."
+    print_info "Installing agentgateway CRDs..."
     helm upgrade -i agentgateway-crds oci://ghcr.io/kgateway-dev/charts/agentgateway-crds \
       --create-namespace --namespace agentgateway-system \
       --version v2.2.0-main \
       --set controller.image.pullPolicy=Always
 
-    print_info "Installing AgentGateway..."
+    print_info "Installing agentgateway..."
     helm upgrade -i agentgateway oci://ghcr.io/kgateway-dev/charts/agentgateway \
       --namespace agentgateway-system \
       --version v2.2.0-main \
       --set controller.image.pullPolicy=Always \
       --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
 
-    print_success "Gateway API and AgentGateway installed"
+    print_info "Waiting for agentgateway components to be ready..."
+    wait_for_deployment agentgateway-system agentgateway 300
+    wait_for_deployment agentgateway-system agentgateway-proxy 300
+    kubectl wait --for=jsonpath='{.subsets[*].addresses[*].ip}' --timeout=120s endpoints/agentgateway-proxy -n agentgateway-system 2>/dev/null || {
+        print_warning "Timeout waiting for agentgateway proxy endpoints, but continuing..."
+    }
+
+    print_success "Gateway API and agentgateway installed"
 
     print_info "Installing kagent-tools (Kubernetes-aware MCP tools)..."
     helm upgrade -i -n kagent --create-namespace kagent-tools \
@@ -697,7 +758,7 @@ if [ "$SKIP_GATEWAY" = false ]; then
 
     print_success "kagent-tools installed"
 else
-    print_warning "Skipping Gateway API and AgentGateway installation"
+    print_warning "Skipping Gateway API and agentgateway installation"
 fi
 
 # Step 9: Configure Gateway Resources
@@ -723,6 +784,8 @@ if [ -d ./policies ]; then
     else
         print_info "Applying Kyverno policies..."
         kubectl apply -f policies/no-unauthenticated-calls.yaml
+        kubectl apply -f policies/restricted-group-deny-tools.yaml
+        kubectl apply -f policies/dev-group-tool-guardrails.yaml
         kubectl apply -f policies/create-from-url-authz.yaml
         print_success "Kyverno policies applied"
 
@@ -745,7 +808,13 @@ if [ -d ./gateway ]; then
             # On macOS with Docker Desktop, MetalLB LoadBalancer IPs are not routable
             # from the host. Keep the hostname on localhost and forward traffic to
             # the Gateway service so curl/Cursor can reach the MCP endpoint.
-            print_info "Starting port-forward to AgentGateway for host access..."
+            print_info "Waiting for agentgateway proxy to be ready for port-forward..."
+            wait_for_deployment agentgateway-system agentgateway-proxy 300
+            kubectl wait --for=jsonpath='{.subsets[*].addresses[*].ip}' --timeout=120s endpoints/agentgateway-proxy -n agentgateway-system 2>/dev/null || {
+                print_warning "Timeout waiting for agentgateway proxy endpoints, but continuing..."
+            }
+
+            print_info "Starting port-forward to agentgateway for host access..."
             nohup kubectl port-forward svc/agentgateway-proxy -n agentgateway-system 8080:8080 \
                 >/tmp/agentgateway-port-forward.log 2>&1 &
             GATEWAY_PF_PID=$!

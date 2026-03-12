@@ -7,7 +7,7 @@ This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authenti
 - Kind cluster running with Kyverno Envoy Plugin
 - Keycloak configured with users and groups
 - Agentgateway deployed
-- Policies applied: `no-unauthenticated-calls` and `create-from-url-authz`
+- Policies applied: `no-unauthenticated-calls`, `restricted-group-deny-tools`, `dev-group-tool-guardrails`, and `create-from-url-authz`
 
 ## Setup
 
@@ -42,7 +42,9 @@ Create a `.cursor/mcp.json` file in the project.
 }
 ```
 
-When prompted, run mcp_auth from the Cursor session. That will run the DCR flow with keycloak and you will have access to the kagent tools! 
+Go into the Cursor Settings under Tools & MCP, and connect to the agentgateway MCP server. When prompted, run `mcp_auth` from the Cursor session. That will run the DCR flow with Keycloak and give you access to the gateway-exposed tools for your identity.
+
+For `kube-dev` users, the demo is intentionally locked down to read-only Kubernetes tools plus `k8s_create_resource_from_url`. Direct write paths such as `k8s_apply_manifest`, `k8s_create_resource`, `k8s_patch_resource`, `k8s_delete_resource`, and `shell` are blocked so they cannot bypass the SAR-protected flow.
 
 ---
 

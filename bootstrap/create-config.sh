@@ -1,7 +1,7 @@
 #!/bin/sh
 
 kubectl_config(){
-  local ISSUER=http://keycloak.kind.cluster:8080/realms/master
+  local ISSUER="${KEYCLOAK_ISSUER:-http://keycloak.kind.cluster:8080/realms/master}"
   local ENDPOINT=$ISSUER/protocol/openid-connect/token
   local ID_TOKEN=$(curl -X POST $ENDPOINT \
     -d grant_type=password \

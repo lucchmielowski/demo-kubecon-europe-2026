@@ -6,12 +6,18 @@ terraform {
     }
   }
 }
+
+variable "keycloak_url" {
+  type    = string
+  default = "http://keycloak.kind.cluster:8080"
+}
+
 # configure keycloak provider
 provider "keycloak" {
   client_id                = "admin-cli"
   username                 = "admin"
   password                 = "admin"
-  url                      = "http://keycloak.kind.cluster:8080"
+  url                      = var.keycloak_url
 }
 
 locals {

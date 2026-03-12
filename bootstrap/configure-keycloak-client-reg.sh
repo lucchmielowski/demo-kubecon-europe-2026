@@ -52,6 +52,20 @@ fi
 echo "Realm frontendUrl set to http://keycloak.kind.cluster:8080"
 echo "Realm accessTokenLifespan set to 3600s (1 hour)"
 
+echo "Re-acquiring admin token after realm update..."
+TOKEN="$(curl -sS -f -X POST "${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=${ADMIN_USER}" \
+  -d "password=${ADMIN_PASSWORD}" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" | jq -r '.access_token')"
+
+if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+  echo "Failed to re-acquire admin token after realm update"
+  exit 1
+fi
+echo "Admin token re-acquired"
+
 echo "Reading client registration policy components..."
 COMPONENTS_JSON="$(curl -sS -f \
   -H "Authorization: Bearer ${TOKEN}" \
