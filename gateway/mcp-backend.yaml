@@ -13,3 +13,8 @@ spec:
           host: "kagent-tools.kagent.svc.cluster.local"
           port: 8084
           protocol: StreamableHTTP
+      - name: mcp-website-fetcher
+        static:
+          host: mcp-website-fetcher.default.svc.cluster.local
+          port: 80
+          protocol: StreamableHTTP

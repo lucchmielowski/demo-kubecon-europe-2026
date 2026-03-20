@@ -31,6 +31,7 @@ spec:
     - name: allowedDevTools
       expression: >
         [
+          "fetch",
           "k8s_check_service_connectivity",
           "k8s_create_resource_from_url",
           "k8s_describe_resource",

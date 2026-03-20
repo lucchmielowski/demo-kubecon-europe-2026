@@ -125,9 +125,10 @@ spec:
       - mcpServer:
           apiGroup: kagent.dev
           kind: RemoteMCPServer
-          name: kgateway-dev
+          name: agentgateway-dev
           namespace: kagent
           toolNames:
+            - fetch
             - k8s_check_service_connectivity
             - k8s_create_resource_from_url
             - k8s_describe_resource

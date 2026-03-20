@@ -20,7 +20,7 @@ echo "  4. Connect to the MCP server"
 echo ""
 echo "Expected behavior:"
 echo "  ✅ Alice (kube-dev group) → Should see tools and can make calls"
-echo "  ❌ unauthorized-user (restricted group) → Should be denied tool access"
+echo "  ⚠️  unauthorized-user (restricted group) → May list tools, but only fetch (mcp-website-fetcher) calls succeed; k8s tools return 403"
 echo ""
 echo "Press Enter to launch MCP Inspector..."
 read

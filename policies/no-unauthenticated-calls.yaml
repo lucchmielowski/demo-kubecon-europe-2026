@@ -16,7 +16,9 @@ spec:
     - name: isPublicPath
       expression: |
         variables.requestMethod == "OPTIONS" ||
-        variables.requestPath.startsWith("/.well-known/")
+        variables.requestPath.startsWith("/.well-known/") ||
+        variables.requestPath.startsWith("/realms/") ||
+        variables.requestPath.startsWith("/resources/")
     - name: hasAuthHeader
       expression: '"authorization" in object.attributes.request.http.headers'
 
@@ -40,14 +42,14 @@ spec:
         size(variables.decodedJwt.Claims["groups"]) > 0 ?
           variables.decodedJwt.Claims["groups"][0] : ""
     - name: allowedGroups
-      expression: '["kube-dev", "kube-admin"]'
+      expression: '["kube-dev", "kube-admin", "restricted"]'
     - name: isAllowedGroup
       expression: variables.userGroup in variables.allowedGroups
   validations:
     # Allow OPTIONS requests and .well-known paths without authentication
     # Otherwise require a valid JWT token and membership in an allowed group
     - expression: |
-        variables.isPublicPath ?
+        variables.isPublicPath || !variables.hasAuthHeader ?
           envoy.Allowed().Response() :
           (variables.jwtString != "" &&
            variables.decodedJwt.Valid &&

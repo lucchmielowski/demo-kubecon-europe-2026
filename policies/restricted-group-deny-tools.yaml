@@ -1,4 +1,5 @@
-# Deny all tools/call requests for users in the "restricted" group
+# Users in the "restricted" group (e.g. Keycloak user `unauthorized-user`) may only
+# invoke the mcp-website-fetcher tool (`fetch`). All other tools/call requests are denied.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:
@@ -9,6 +10,8 @@ spec:
   variables:
     - name: mcpReq
       expression: mcp.Parse(object.attributes.request.http.body)
+    - name: toolName
+      expression: variables.mcpReq.ToolCall.Name
     - name: jwks
       expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: authHeader
@@ -36,5 +39,5 @@ spec:
         mcp.Parse(object.attributes.request.http.body).Method == mcp.ToolsCallMethod
   validations:
     - expression: |
-        variables.userGroup == "restricted" ?
-          envoy.Denied(403).Response() : envoy.Allowed().Response()
+        variables.userGroup != "restricted" || variables.toolName == "fetch" ?
+          envoy.Allowed().Response() : envoy.Denied(403).Response()

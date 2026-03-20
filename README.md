@@ -7,6 +7,7 @@ This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authenti
 - Kind cluster running with Kyverno Envoy Plugin
 - Keycloak configured with users and groups
 - Agentgateway deployed
+- MCP backends: `kagent-tools` (Helm) and `mcp-website-fetcher` (`mcp-servers/mcp-website-fetcher.yaml` — exposes the `fetch` tool for URL content)
 - Policies applied: `no-unauthenticated-calls`, `restricted-group-deny-tools`, `dev-group-tool-guardrails`, and `create-from-url-authz`
 
 ## Setup
@@ -15,6 +16,7 @@ This demo showcases how [Kyverno](https://kyverno.io/) policies enforce authenti
    ```bash
    kubectl get pods -n kyverno
    kubectl get pods -n keycloak
+   kubectl get pods -n default -l app=mcp-website-fetcher
    ```
 
 2. Get authentication tokens for different users:
@@ -57,8 +59,10 @@ This example demonstrates the `no-unauthenticated-calls` policy that enforces au
 The `no-unauthenticated-calls` policy:
 - Validates JWT tokens from the Authorization header
 - Verifies token signature using Keycloak JWKS endpoint
-- Checks that the user belongs to allowed groups (`kube-dev` or `kube-admin`)
+- Checks that the user belongs to allowed groups (`kube-dev`, `kube-admin`, or `restricted`)
 - Returns 401 Unauthorized for invalid/missing tokens or users not in an allowed group
+
+Users in the `restricted` group (`unauthorized-user` in Keycloak) are authenticated like other users but are limited to the `fetch` tool by the `restricted-group-deny-tools` policy (see Test Case 1.4).
 
 ### Test Case 1.1: Unauthenticated Request (Should Fail)
 
@@ -153,32 +157,44 @@ curl -X POST http://gateway.kind.cluster:8080/mcp \
 - Status: `401 Unauthorized`
 - Policy denies the request because the JWT token is invalid or cannot be decoded
 
-### \[OPTIONAL\] Test Case 1.4: Valid Token with Unauthorized Group (Should Fail)
+### \[OPTIONAL\] Test Case 1.4: Restricted User (`unauthorized-user`) — `fetch` Only
+
+Users in the `restricted` group authenticate successfully but may only invoke `tools/call` for the mcp-website-fetcher tool (`fetch`). Kubernetes tools and other MCP tools return `403 Forbidden`.
 
 ```bash
-# Get token for a user in the "restricted" group (not in kube-dev or kube-admin)
 UNAUTHORIZED_TOKEN=$(./get-token.sh unauthorized-user)
 
-# Attempt any request - should be denied at the authentication layer
-curl -v -X POST http://gateway.kind.cluster:8080/mcp \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
+# Initialize (should succeed — same as other users)
+curl -sS --http1.1 -i http://gateway.kind.cluster:8080/mcp \
   -H "Authorization: Bearer $UNAUTHORIZED_TOKEN" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-      "protocolVersion": "2025-06-18",
-      "capabilities": {},
-      "clientInfo": {"name": "curl", "version": "1.0"}
-    }
-  }'
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+# Expect: 200 OK with Mcp-Session-Id header
+
+SESSION_ID=... # copy from Mcp-Session-Id response header
+
+# Allowed: fetch a URL via mcp-website-fetcher
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST http://gateway.kind.cluster:8080/mcp \
+  -H "Authorization: Bearer $UNAUTHORIZED_TOKEN" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fetch","arguments":{"url":"https://example.com"}}}'
+
+# Denied: any Kubernetes MCP tool
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST http://gateway.kind.cluster:8080/mcp \
+  -H "Authorization: Bearer $UNAUTHORIZED_TOKEN" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_get_resources","arguments":{"namespace":"default","resource_type":"pods"}}}'
 ```
 
 **Expected Result:**
-- Status: `401 Unauthorized`
-- Policy denies the request because user group (`restricted`) is not in the allowed list (`kube-dev`, `kube-admin`)
+- `initialize`: `200 OK`
+- `tools/call` with `fetch`: `200 OK`
+- `tools/call` with `k8s_get_resources` (or any other tool): `403 Forbidden`
 
 ---
 
@@ -327,12 +343,27 @@ curl -s "http://gateway.kind.cluster:8080/mcp" -v \
 
 These examples demonstrate:
 
-1. **Authentication Enforcement**: All requests must include valid JWT tokens from Keycloak, and users must belong to authorized groups.
+1. **Authentication Enforcement**: All requests must include valid JWT tokens from Keycloak, and users must belong to authorized groups (`kube-dev`, `kube-admin`, or `restricted`).
 
 2. **Authorization Enforcement**: Even with valid authentication, users can only perform operations they're authorized for, verified through Kubernetes Subject Access Review.
 
-3. **Least Privilege**: Users are restricted to their assigned namespaces and resource types based on Kubernetes RBAC.
+3. **Least Privilege**: Users are restricted to their assigned namespaces and resource types based on Kubernetes RBAC. Users in the `restricted` group (`unauthorized-user`) may only invoke the MCP `fetch` tool (mcp-website-fetcher), not Kubernetes tools.
 
 4. **Per-User Accountability**: Each request is tied to the actual user identity from the JWT token, enabling proper audit trails.
 
 5. **Policy-Based Guardrails**: Kyverno policies provide additional validation beyond basic RBAC, allowing for complex business rules.
+
+### MCP Inspector 
+
+1. Walkthrough of what's installed
+2.  ./test-with-mcpinspector.sh
+3. Test requests through MCP inspector with alice vs. unauthorized-user (restricted: `fetch` only)
+
+### Cursor Demo Script
+
+1. What namespaces are in my cluster -> this should work
+2. Apply this manifest to my cluster (https://raw.githubusercontent.com/kubernetes/website/main/content/en/examples/controllers/nginx-deployment.yaml) in the production ns -> this should fail
+
+### Kyverno Magic 
+
+1. Walkthrough policies 

@@ -227,7 +227,7 @@ terraform -chdir=./bootstrap init -upgrade
 terraform -chdir=./bootstrap apply -auto-approve
 ```
 
-This creates users (`alice`, `user-dev`, `user-admin`), groups (`kube-dev`, `kube-admin`), and OAuth clients.
+This creates users (`alice`, `user-dev`, `user-admin`, `unauthorized-user`), groups (`kube-dev`, `kube-admin`, `restricted`), and OAuth clients. The `unauthorized-user` account is in `restricted` and may only use the MCP `fetch` tool at the gateway (see `restricted-group-deny-tools`).
 
 ### Configure Keycloak Client Registration
 
@@ -382,7 +382,7 @@ The Kyverno authorization server will:
 - Perform SubjectAccessReview checks against Kubernetes RBAC
 - Enforce custom validation policies (namespace restrictions, label policies, etc.)
 
-## Step 9: Install KGateway and Gateway API
+## Step 9: Install agentgateway and Gateway API
 
 ```sh
 # Install Gateway API
@@ -390,10 +390,10 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/re
 
 
 # Install Agentgateway CRDS
-helm upgrade -i agentgateway-crds oci://ghcr.io/kgateway-dev/charts/agentgateway-crds --create-namespace --namespace agentgateway-system --version v2.2.0-main --set controller.image.pullPolicy=Always
+helm upgrade -i agentgateway-crds oci://ghcr.io/agentgateway-dev/charts/agentgateway-crds --create-namespace --namespace agentgateway-system --version 1.0.0-main --set controller.image.pullPolicy=Always
 
 # Install Agentgateway
-helm upgrade -i agentgateway oci://ghcr.io/kgateway-dev/charts/agentgateway   --namespace agentgateway-system   --version v2.2.0-main   --set controller.image.pullPolicy=Always   --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
+helm upgrade -i agentgateway oci://ghcr.io/agentgateway-dev/charts/agentgateway   --namespace agentgateway-system   --version 1.0.0  --set controller.image.pullPolicy=Always   --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
 ```
 
 We also need install kubernetes-aware MCP tools:
@@ -402,12 +402,19 @@ We also need install kubernetes-aware MCP tools:
 helm upgrade -i -n kagent --create-namespace kagent-tools oci://ghcr.io/kagent-dev/tools/helm/kagent-tools --version 0.0.13
 ```
 
+Deploy the website fetch MCP server (exposes a `fetch` tool; streamable HTTP). The AgentgatewayBackend in `gateway/mcp-backend.yaml` points at this Service on port 80.
+
+```sh
+kubectl apply -f mcp-servers/mcp-website-fetcher.yaml
+kubectl wait --for=condition=available --timeout=120s deployment/mcp-website-fetcher -n default
+```
+
 **What we just installed:**
 - **Gateway API CRDs**: Custom Resource Definitions for the Gateway API (HTTPRoute, Gateway, etc.)
-- **KGateway CRDs**: Additional CRDs specific to KGateway
-- **KGateway**: The main gateway controller with AI/MCP extension support
-- **agentgateway**: Enables agent-based interactions with enhanced AI features
+- **agentgateway CRDs**: Additional CRDs specific to agentgateway
+- **agentgateway**: The main gateway controller with AI/MCP extension support
 - **kagent-tools**: Kubernetes-aware tools that can be called through the MCP protocol
+- **mcp-website-fetcher**: Demo MCP server ([electrocucaracha/mcp-website-fetcher](https://github.com/electrocucaracha/mcp-website-fetcher)) that fetches URL content via the `fetch` tool
 
 ## Step 10: Configure Gateway Resources with MCP Authentication
 
@@ -562,6 +569,8 @@ Apply the Kyverno policies that enforce authentication and authorization on MCP 
 
 ```sh
 kubectl apply -f policies/no-unauthenticated-calls.yaml
+kubectl apply -f policies/restricted-group-deny-tools.yaml
+kubectl apply -f policies/dev-group-tool-guardrails.yaml
 kubectl apply -f policies/create-from-url-authz.yaml
 ```
 
@@ -572,8 +581,10 @@ kubectl get validatingpolicy
 ```
 
 These policies:
-- **no-unauthenticated-calls**: Rejects any MCP request that does not include a valid JWT token
-- **create-from-url-authz**: Performs SubjectAccessReview checks to enforce Kubernetes RBAC on MCP tool calls
+- **no-unauthenticated-calls**: Rejects MCP requests without a valid JWT; allows users in `kube-dev`, `kube-admin`, or `restricted` (Keycloak user `unauthorized-user` is in `restricted`)
+- **restricted-group-deny-tools**: For `restricted` users, allows only `tools/call` for the `fetch` tool (mcp-website-fetcher); denies other tools with 403
+- **dev-group-tool-guardrails**: For `kube-dev`, allows only the listed read-oriented and `k8s_create_resource_from_url` tools
+- **create-from-url-authz**: Performs SubjectAccessReview checks to enforce Kubernetes RBAC on `k8s_create_resource_from_url`
 
 ## Step 13: Testing MCP Authentication and Authorization
 

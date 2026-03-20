@@ -730,15 +730,15 @@ if [ "$SKIP_GATEWAY" = false ]; then
     kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
 
     print_info "Installing agentgateway CRDs..."
-    helm upgrade -i agentgateway-crds oci://ghcr.io/kgateway-dev/charts/agentgateway-crds \
+    helm upgrade -i agentgateway-crds oci://ghcr.io/agentgateway/charts/agentgateway-crds \
       --create-namespace --namespace agentgateway-system \
-      --version v2.2.0-main \
+       --version 1.0.0 \
       --set controller.image.pullPolicy=Always
 
     print_info "Installing agentgateway..."
-    helm upgrade -i agentgateway oci://ghcr.io/kgateway-dev/charts/agentgateway \
+    helm upgrade -i agentgateway oci://ghcr.io/agentgateway/charts/agentgateway \
       --namespace agentgateway-system \
-      --version v2.2.0-main \
+      --version 1.0.0 \
       --set controller.image.pullPolicy=Always \
       --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
 
@@ -757,6 +757,11 @@ if [ "$SKIP_GATEWAY" = false ]; then
       --version 0.0.13
 
     print_success "kagent-tools installed"
+
+    print_info "Installing mcp-website-fetcher (URL fetch MCP server)..."
+    kubectl apply -f mcp-servers/mcp-website-fetcher.yaml
+    wait_for_deployment default mcp-website-fetcher 120
+    print_success "mcp-website-fetcher installed"
 else
     print_warning "Skipping Gateway API and agentgateway installation"
 fi
@@ -891,6 +896,7 @@ print_info "Keycloak Users & Credentials (configured via Terraform):"
 echo "  - alice / alice        (kube-dev group)"
 echo "  - user-dev / user-dev  (kube-dev group)"
 echo "  - user-admin / user-admin (kube-admin group)"
+echo "  - unauthorized-user / unauthorized-user (restricted — MCP fetch tool only)"
 echo ""
 print_info "If Keycloak is restarted and users are lost, re-run Terraform:"
 echo "  cd bootstrap && terraform apply"

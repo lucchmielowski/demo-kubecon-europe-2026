@@ -93,7 +93,7 @@ elif [ "$HTTP_CODE" != "200" ]; then
   if [ "$HTTP_CODE" = "401" ]; then
     echo "❌ Request DENIED - 401 Unauthorized"
     echo ""
-    echo "This means the user '$USERNAME' is not in an authorized group (kube-dev or kube-admin)"
+    echo "This means the user '$USERNAME' is not in an authorized group (kube-dev, kube-admin, or restricted)"
     echo "User groups: $USER_GROUPS"
   elif [ "$HTTP_CODE" = "403" ]; then
     echo "❌ Request DENIED - 403 Forbidden"
@@ -175,7 +175,7 @@ if [ "$HTTP_CODE" = "200" ]; then
 elif [ "$HTTP_CODE" = "401" ]; then
   echo "❌ Request DENIED - 401 Unauthorized"
   echo ""
-  echo "This means the user '$USERNAME' is not in an authorized group (kube-dev or kube-admin)"
+  echo "This means the user '$USERNAME' is not in an authorized group (kube-dev, kube-admin, or restricted)"
   echo "User groups: $USER_GROUPS"
 elif [ "$HTTP_CODE" = "403" ]; then
   echo "❌ Request DENIED - 403 Forbidden"
