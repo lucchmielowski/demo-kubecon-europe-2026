@@ -1,7 +1,7 @@
 apiVersion: kagent.dev/v1alpha2
 kind: RemoteMCPServer
 metadata:
-  name: kgateway-dev
+  name: agentgateway-dev
   namespace: kagent
 spec:
   description: ""

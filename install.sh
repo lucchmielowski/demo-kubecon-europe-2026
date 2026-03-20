@@ -727,18 +727,18 @@ if [ "$SKIP_GATEWAY" = false ]; then
     print_header "Step 8: Install Gateway API and agentgateway"
 
     print_info "Installing Gateway API CRDs..."
-    kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.1/standard-install.yaml
+    kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
 
     print_info "Installing agentgateway CRDs..."
-    helm upgrade -i agentgateway-crds oci://ghcr.io/kgateway-dev/charts/agentgateway-crds \
+    helm upgrade -i agentgateway-crds oci://ghcr.io/agentgateway/charts/agentgateway-crds \
       --create-namespace --namespace agentgateway-system \
-      --version v2.2.0-main \
+      --version 1.0.0 \
       --set controller.image.pullPolicy=Always
 
     print_info "Installing agentgateway..."
-    helm upgrade -i agentgateway oci://ghcr.io/kgateway-dev/charts/agentgateway \
+    helm upgrade -i agentgateway oci://ghcr.io/agentgateway/charts/agentgateway \
       --namespace agentgateway-system \
-      --version v2.2.0-main \
+      --version 1.0.0 \
       --set controller.image.pullPolicy=Always \
       --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
 

@@ -382,7 +382,7 @@ The Kyverno authorization server will:
 - Perform SubjectAccessReview checks against Kubernetes RBAC
 - Enforce custom validation policies (namespace restrictions, label policies, etc.)
 
-## Step 9: Install KGateway and Gateway API
+## Step 9: Install agentgateway and Gateway API
 
 ```sh
 # Install Gateway API
@@ -390,10 +390,10 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/re
 
 
 # Install Agentgateway CRDS
-helm upgrade -i agentgateway-crds oci://ghcr.io/kgateway-dev/charts/agentgateway-crds --create-namespace --namespace agentgateway-system --version v2.2.0-main --set controller.image.pullPolicy=Always
+helm upgrade -i agentgateway-crds oci://ghcr.io/agentgateway/charts/agentgateway-crds --create-namespace --namespace agentgateway-system --version 1.0.0 --set controller.image.pullPolicy=Always
 
 # Install Agentgateway
-helm upgrade -i agentgateway oci://ghcr.io/kgateway-dev/charts/agentgateway   --namespace agentgateway-system   --version v2.2.0-main   --set controller.image.pullPolicy=Always   --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
+helm upgrade -i agentgateway oci://ghcr.io/agentgateway/charts/agentgateway   --namespace agentgateway-system   --version 1.0.0   --set controller.image.pullPolicy=Always   --set controller.extraEnv.KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
 ```
 
 We also need install kubernetes-aware MCP tools:
@@ -404,9 +404,8 @@ helm upgrade -i -n kagent --create-namespace kagent-tools oci://ghcr.io/kagent-d
 
 **What we just installed:**
 - **Gateway API CRDs**: Custom Resource Definitions for the Gateway API (HTTPRoute, Gateway, etc.)
-- **KGateway CRDs**: Additional CRDs specific to KGateway
-- **KGateway**: The main gateway controller with AI/MCP extension support
-- **agentgateway**: Enables agent-based interactions with enhanced AI features
+- **agentgateway CRDs**: Additional CRDs specific to agentgateway
+- **agentgateway**: The main gateway controller with AI/MCP extension support
 - **kagent-tools**: Kubernetes-aware tools that can be called through the MCP protocol
 
 ## Step 10: Configure Gateway Resources with MCP Authentication

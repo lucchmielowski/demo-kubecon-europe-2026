@@ -125,7 +125,7 @@ spec:
       - mcpServer:
           apiGroup: kagent.dev
           kind: RemoteMCPServer
-          name: kgateway-admin
+          name: agentgateway-admin
           namespace: kagent
           toolNames:
             - k8s_apply_manifest
