@@ -34,12 +34,12 @@ spec:
     mcp:
       authentication:
         # Issuer URL - must match the 'iss' claim in JWT tokens
-        issuer: "http://keycloak.kind.cluster:8080/realms/master"
+        issuer: "http://keycloak.localhost:18080/realms/master"
         # JWKS configuration for token validation
         jwks:
           # Reference to the Keycloak service for fetching public keys
           backendRef:
-            name: keycloak
+            name: keycloak-http
             kind: Service
             namespace: keycloak
             port: 8080
@@ -47,7 +47,7 @@ spec:
           jwksPath: "/realms/master/protocol/openid-connect/certs"
         # Expected audience in JWT tokens
         audiences:
-        - http://gateway.kind.cluster:8080/mcp
+        - http://gateway.localhost:8080/mcp
         # Validation mode: Strict requires all claims to be valid
         mode: Strict
         # Identity provider type
@@ -55,10 +55,10 @@ spec:
         # MCP resource metadata for OAuth discovery
         resourceMetadata:
           # Resource identifier for this MCP server
-          resource: http://gateway.kind.cluster:8080/mcp
+          resource: http://gateway.localhost:8080/mcp
           # Explicit OAuth server endpoints to avoid upstream metadata fetch issues.
-          authorizationServer: "http://keycloak.kind.cluster:8080/realms/master"
-          tokenEndpoint: "http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token"
+          authorizationServer: "http://keycloak.localhost:18080/realms/master"
+          tokenEndpoint: "http://keycloak.localhost:18080/realms/master/protocol/openid-connect/token"
           # Scopes supported by this MCP server
           scopesSupported:
           - email
@@ -168,4 +168,4 @@ spec:
   traffic:
     transformation:
       response:
-        body: 'request.path.startsWith("/.well-known/oauth-authorization-server") || request.path == "/.well-known/openid-configuration" ? json(response.body).merge({"issuer":"http://keycloak.kind.cluster:8080/realms/master","authorization_endpoint":"http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/auth","token_endpoint":"http://gateway.kind.cluster:8080/realms/master/protocol/openid-connect/token","registration_endpoint":"http://gateway.kind.cluster:8080/realms/master/clients-registrations/openid-connect","jwks_uri":"http://gateway.kind.cluster:8080/realms/master/protocol/openid-connect/certs"}) : response.body'
+        body: 'request.path.startsWith("/.well-known/oauth-authorization-server") || request.path == "/.well-known/openid-configuration" ? json(response.body).merge({"issuer":"http://keycloak.localhost:18080/realms/master","authorization_endpoint":"http://keycloak.localhost:18080/realms/master/protocol/openid-connect/auth","token_endpoint":"http://gateway.localhost:8080/realms/master/protocol/openid-connect/token","registration_endpoint":"http://gateway.localhost:8080/realms/master/clients-registrations/openid-connect","jwks_uri":"http://gateway.localhost:8080/realms/master/protocol/openid-connect/certs"}) : response.body'

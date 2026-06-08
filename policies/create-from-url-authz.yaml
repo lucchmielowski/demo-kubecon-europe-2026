@@ -6,16 +6,9 @@ spec:
   evaluation:
     mode: Envoy
   variables:
-    - name: requestMethod
-      expression: object.attributes.request.http.method
-    - name: requestPath
-      expression: object.attributes.request.http.path
-    - name: isMcpPost
-      expression: variables.requestMethod == "POST" && variables.requestPath.startsWith("/mcp")
-    # Same as previous policy, parse MCP, get args, get JWT Token
     - name: mcpReq
       expression: |
-        variables.isMcpPost ?
+        object.attributes.request.http.method == "POST" && object.attributes.request.http.path.startsWith("/mcp") ?
           mcp.Parse(object.attributes.request.http.body) :
           mcp.Parse("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"noop\",\"params\":{}}")
     - name: isCreateFromUrlCall
@@ -26,12 +19,11 @@ spec:
       expression: variables.mcpReq.GetStringArgument("namespace", "")
     - name: url
       expression: variables.mcpReq.GetStringArgument("url", "")
-      
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
       expression: |
-        ("authorization" in object.attributes.request.http.headers) &&
+        "authorization" in object.attributes.request.http.headers &&
         object.attributes.request.http.headers["authorization"].startsWith("Bearer ") ?
           object.attributes.request.http.headers["authorization"].split(" ")[1] : ""
     - name: decodedJwt
@@ -39,22 +31,19 @@ spec:
         variables.jwtString == "" ?
           jwt.Decode("eyJhbGciOiJIUzI1NiJ9.e30.invalid", variables.jwks) :
           jwt.Decode(variables.jwtString, variables.jwks)
-    # Get and parse manifest from URL
     - name: manifest
       expression: |
         variables.isCreateFromUrlCall && variables.url != "" ?
           yaml.UnmarshalFromURL(variables.url) :
           dyn({"kind": "", "apiVersion": "v1"})
+    - name: apiGroup
+      expression: |
+        variables.manifest["apiVersion"].contains("/") ?
+          variables.manifest["apiVersion"].split("/")[0] : ""
     - name: resourceKind
       expression: |
         variables.manifest["kind"] != "" ? variables.manifest["kind"].lowerAscii() + "s" : ""
-    # Extract API group from apiVersion (e.g., "apps/v1" -> "apps", "v1" -> "")
-    - name: apiVersion
-      expression: variables.manifest["apiVersion"]
-    - name: apiGroup
-      expression: 'variables.apiVersion.contains("/") ? variables.apiVersion.split("/")[0] : ""'
-    # Create SAR to check if user is allowed to do X
-    - name: res
+    - name: sarSpec
       expression: >-
         {
           "kind": dyn("SubjectAccessReview"),
@@ -73,15 +62,15 @@ spec:
     - name: sar
       expression: >-
         variables.isCreateFromUrlCall ?
-          resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.res) :
+          resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.sarSpec) :
           dyn({"status": dyn({"allowed": true})})
-  matchConditions: 
-    - expression: |
+  matchConditions:
+    - name: isToolsCall
+      expression: |
         object.attributes.request.http.method == "POST" &&
         object.attributes.request.http.path.startsWith("/mcp") &&
         mcp.Parse(object.attributes.request.http.body).Method == mcp.ToolsCallMethod &&
         mcp.Parse(object.attributes.request.http.body).ToolCall.Name == "k8s_create_resource_from_url"
-      name: isToolsCall
   validations:
     - expression: |
         has(variables.sar.status) && variables.sar.status.allowed == true ?

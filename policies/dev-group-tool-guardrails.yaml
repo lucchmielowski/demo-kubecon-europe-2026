@@ -6,28 +6,24 @@ spec:
   evaluation:
     mode: Envoy
   variables:
-    - name: mcpReq
-      expression: mcp.Parse(object.attributes.request.http.body)
     - name: toolName
-      expression: variables.mcpReq.ToolCall.Name
+      expression: mcp.Parse(object.attributes.request.http.body).ToolCall.Name
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
-    - name: authHeader
-      expression: |
-        "authorization" in object.attributes.request.http.headers ? object.attributes.request.http.headers["authorization"] : ""
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
       expression: |
-        variables.authHeader.startsWith("Bearer ") ? variables.authHeader.split(" ")[1] : ""
+        "authorization" in object.attributes.request.http.headers &&
+        object.attributes.request.http.headers["authorization"].startsWith("Bearer ") ?
+          object.attributes.request.http.headers["authorization"].split(" ")[1] : ""
     - name: decodedJwt
       expression: |
         variables.jwtString == "" ?
           jwt.Decode("eyJhbGciOiJIUzI1NiJ9.e30.invalid", variables.jwks) :
           jwt.Decode(variables.jwtString, variables.jwks)
-    - name: userGroup
+    - name: isDevGroup
       expression: |
         ("groups" in variables.decodedJwt.Claims) &&
-        size(variables.decodedJwt.Claims["groups"]) > 0 ?
-          variables.decodedJwt.Claims["groups"][0] : ""
+        variables.decodedJwt.Claims["groups"].exists(g, g == "kube-dev")
     - name: allowedDevTools
       expression: >
         [
@@ -50,5 +46,5 @@ spec:
         mcp.Parse(object.attributes.request.http.body).Method == mcp.ToolsCallMethod
   validations:
     - expression: |
-        variables.userGroup != "kube-dev" || variables.toolName in variables.allowedDevTools ?
+        !variables.isDevGroup || variables.toolName in variables.allowedDevTools ?
           envoy.Allowed().Response() : envoy.Denied(403).Response()

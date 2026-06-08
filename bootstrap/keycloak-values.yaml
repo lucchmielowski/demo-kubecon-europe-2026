@@ -1,36 +1,41 @@
-image:
-  repository: bitnamilegacy/keycloak
+fullnameOverride: keycloak
 
-auth:
-  createAdminUser: true
-  adminUser: admin
-  adminPassword: admin
-  managementUser: manager
-  managementPassword: manager
+command:
+  - "/opt/keycloak/bin/kc.sh"
+  - "start-dev"
+  - "--http-port=8080"
+  - "--http-relative-path=/"
 
-proxyAddressForwarding: true
+extraEnv: |
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    value: admin
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    value: admin
 
-# Disable ingress - use LoadBalancer instead (simpler, no NGINX needed)
-ingress:
-  enabled: false
-
-# Expose via LoadBalancer for external OIDC access (kubectl authentication)
-# AgentgatewayPolicy will use the internal service for MCP auth
 service:
-  type: LoadBalancer
-  ports:
-    http: 8080
-    https: 8443
+  type: NodePort
+  httpPort: 8080
+  httpsPort: 8443
+  httpNodePort: 30080
 
-# Disable TLS for easier MCP Inspector OAuth flow
-tls:
-  enabled: false
+startupProbe: |
+  httpGet:
+    path: /health
+    port: http-internal
+  initialDelaySeconds: 15
+  periodSeconds: 5
+  failureThreshold: 60
 
-postgresql:
-  image:
-    repository: bitnamilegacy/postgresql
-  enabled: true
-  tls:
-    enabled: false
-  auth:
-    postgresPassword: admin
+readinessProbe: |
+  httpGet:
+    path: /health/ready
+    port: http-internal
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+livenessProbe: |
+  httpGet:
+    path: /health/live
+    port: http-internal
+  periodSeconds: 10
+  timeoutSeconds: 5

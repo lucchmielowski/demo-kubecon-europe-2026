@@ -1,19 +1,10 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
+name: kyverno-authz
 nodes:
   - role: control-plane
-    extraMounts:
-      - hostPath: .ssl/root-ca.pem
-        containerPath: /etc/ca-certificates/keycloak/root-ca.pem
-        readOnly: true
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP
   - role: worker
-kubeadmConfigPatches:
-  - |
-    kind: ClusterConfiguration
-    apiServer:
-      extraArgs:
-        oidc-client-id: kube
-        oidc-issuer-url: https://keycloak.kind.cluster/realms/master
-        oidc-username-claim: email
-        oidc-groups-claim: groups
-        oidc-ca-file: /etc/ca-certificates/keycloak/root-ca.pem

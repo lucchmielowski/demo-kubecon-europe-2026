@@ -1,4 +1,3 @@
-# Deny all tools/call requests for users in the "restricted" group
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:
@@ -7,26 +6,22 @@ spec:
   evaluation:
     mode: Envoy
   variables:
-    - name: mcpReq
-      expression: mcp.Parse(object.attributes.request.http.body)
     - name: jwks
-      expression: jwks.Fetch("http://keycloak.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
-    - name: authHeader
-      expression: |
-        "authorization" in object.attributes.request.http.headers ? object.attributes.request.http.headers["authorization"] : ""
+      expression: jwks.Fetch("http://keycloak-http.keycloak.svc.cluster.local:8080/realms/master/protocol/openid-connect/certs")
     - name: jwtString
       expression: |
-        variables.authHeader.startsWith("Bearer ") ? variables.authHeader.split(" ")[1] : ""
+        "authorization" in object.attributes.request.http.headers &&
+        object.attributes.request.http.headers["authorization"].startsWith("Bearer ") ?
+          object.attributes.request.http.headers["authorization"].split(" ")[1] : ""
     - name: decodedJwt
       expression: |
         variables.jwtString == "" ?
           jwt.Decode("eyJhbGciOiJIUzI1NiJ9.e30.invalid", variables.jwks) :
           jwt.Decode(variables.jwtString, variables.jwks)
-    - name: userGroup
+    - name: isRestricted
       expression: |
         ("groups" in variables.decodedJwt.Claims) &&
-        size(variables.decodedJwt.Claims["groups"]) > 0 ?
-          variables.decodedJwt.Claims["groups"][0] : ""
+        variables.decodedJwt.Claims["groups"].exists(g, g == "restricted")
   matchConditions:
     - name: isRestrictedGroupToolsCall
       expression: |
@@ -36,5 +31,5 @@ spec:
         mcp.Parse(object.attributes.request.http.body).Method == mcp.ToolsCallMethod
   validations:
     - expression: |
-        variables.userGroup == "restricted" ?
+        variables.isRestricted ?
           envoy.Denied(403).Response() : envoy.Allowed().Response()

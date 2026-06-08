@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-RESPONSE=$(curl -s -X POST http://keycloak.kind.cluster:8080/realms/master/protocol/openid-connect/token \
+RESPONSE=$(curl -s -X POST http://keycloak.localhost:18080/realms/master/protocol/openid-connect/token \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d 'grant_type=password' \
   -d 'client_id=mcp-inspector' \

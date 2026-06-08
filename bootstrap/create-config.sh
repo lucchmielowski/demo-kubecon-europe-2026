@@ -1,7 +1,7 @@
 #!/bin/sh
 
 kubectl_config(){
-  local ISSUER="${KEYCLOAK_ISSUER:-http://keycloak.kind.cluster:8080/realms/master}"
+  local ISSUER="${KEYCLOAK_ISSUER:-http://keycloak.localhost:18080/realms/master}"
   local ENDPOINT=$ISSUER/protocol/openid-connect/token
   local ID_TOKEN=$(curl -X POST $ENDPOINT \
     -d grant_type=password \
@@ -28,7 +28,7 @@ kubectl_config(){
     --auth-provider-arg=id-token=$ID_TOKEN \
     --auth-provider-arg=refresh-token=$REFRESH_TOKEN \
     --auth-provider-arg=idp-certificate-authority-data=$CA_DATA
-  kubectl config set-context $1 --cluster=kind-kind --user=$1
+  kubectl config set-context $1 --cluster=kind-kyverno-authz --user=$1
 }
 
 # setup config for our users

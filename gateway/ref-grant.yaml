@@ -29,21 +29,4 @@ spec:
   to:
     - group: ""
       kind: Service
-      name: keycloak
----
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: ReferenceGrant
-metadata:
-  name: keycloak-tls-from-gateway
-  namespace: keycloak
-  labels:
-    app: agentgateway-kyverno
-spec:
-  from:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      namespace: agentgateway-system
-  to:
-    - group: ""
-      kind: Secret
-      name: keycloak-tls
+      name: keycloak-http
